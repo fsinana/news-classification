@@ -1,14 +1,16 @@
-# spark_streaming.py (robust final version)
+# spark_streaming.py (cleaned & corrected)
 import os
 import glob
 import logging
 from pyspark.sql import SparkSession
 from pyspark.ml import PipelineModel
 from pyspark.sql.functions import (
-    col, expr, udf, array_max, when, size as spark_size, lit
+    col, expr, when, greatest, array_max, size as spark_size, lit
 )
 from pyspark.sql.types import StructType, StringType, DoubleType, ArrayType
 from pyspark.sql.utils import AnalysisException
+from pyspark.sql.functions import udf
+from pyspark.sql.functions import to_timestamp
 
 # -------------------- logging --------------------
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
@@ -16,10 +18,9 @@ logger = logging.getLogger("news-sentiment-stream")
 
 # -------------------- config -----------------------
 MODEL_DIR = "models/news_sentiment_pipeline"
-IN_DIR = "data/incoming"
-OUT_DIR = "data/predictions"
-CHECKPOINT_DIR = "checkpoints/news_stream"
-
+IN_DIR = r"C:\temp\news-classification\data\incoming"
+OUT_DIR = r"C:\temp\news-classification\data\predictions"
+CHECKPOINT_DIR = r"C:\temp\news-classification\checkpoints\news_stream"
 os.makedirs(IN_DIR, exist_ok=True)
 os.makedirs(OUT_DIR, exist_ok=True)
 os.makedirs(os.path.dirname(CHECKPOINT_DIR) or ".", exist_ok=True)
@@ -35,6 +36,7 @@ max_prob_udf = udf(max_prob, DoubleType())
 
 def vector_to_list(v):
     try:
+        # handle DenseVector or SparseVector from MLlib
         return v.toArray().tolist()
     except Exception:
         return []
@@ -85,7 +87,7 @@ def main():
         logger.info("Loaded model from %s", MODEL_DIR)
     except Exception as e:
         logger.error("Failed to load model from '%s': %s", MODEL_DIR, e)
-        logger.error("Run 'python train_model.py' to create the model, then restart this script.")
+        logger.error("Run training to create the model, then restart this script.")
         spark.stop()
         return
     # -------------------------------------------------
@@ -96,6 +98,7 @@ def main():
     # ------------------ probability handling ------------------
     # Try to use vector_to_array (Spark 3+) for performance, else fallback to Python UDF
     try:
+        # import here to avoid top-level crash on older pyspark
         from pyspark.ml.functions import vector_to_array  # type: ignore
         prob_array_col = vector_to_array(col("probability"))
         use_array_max = True
@@ -133,8 +136,8 @@ def main():
     else:
         result = result.withColumn("confidence", max_prob_udf(col("prob_values")))
 
-    # sentiment mapping — ensure your training used 1.0 as Positive
-    result = result.withColumn("sentiment", expr("CASE WHEN prediction = 1.0 THEN 'Positive' ELSE 'Negative' END"))
+    # sentiment mapping — use probability threshold (more robust)
+    result = result.withColumn("sentiment", when(col("prob_positive") > 0.5, "Positive").otherwise("Negative"))
 
     # drop helper column to keep output tidy
     result = result.drop("prob_values")
@@ -143,6 +146,10 @@ def main():
     # ------------------ write stream ------------------
     checkpoint_path = os.path.abspath(CHECKPOINT_DIR)
     logger.info("Starting streaming: watching %s -> writing to %s (checkpoint=%s)", IN_DIR, OUT_DIR, checkpoint_path)
+    result = result.withColumn("event_time", to_timestamp("timestamp"))
+
+# 10 minute watermark to bound state (adjust depending on your data)
+    result = result.withWatermark("event_time", "10 minutes").dropDuplicates(["id"])
 
     query = result.select(
         "id", "text", "source", "url", "timestamp", "sentiment", "prob_negative", "prob_positive", "confidence"
@@ -161,7 +168,10 @@ def main():
         query.stop()
     except Exception as ex:
         logger.error("Streaming error: %s", ex)
-        query.stop()
+        try:
+            query.stop()
+        except Exception:
+            pass
     finally:
         spark.stop()
         logger.info("Spark session stopped.")
