@@ -4,13 +4,14 @@ import glob
 import os
 from datetime import datetime
 
-# Update this if you changed the path
 OUT_DIR = r"data/predictions"
 
 st.set_page_config(page_title="Real-Time News Sentiment", layout="wide")
 st.title("📰 Real-Time News Sentiment Dashboard")
 
-# ------------------------- LOAD PREDICTIONS -------------------------
+# ---------------------------------------------------
+# Load prediction JSON files (auto-refresh every 5 seconds)
+# ---------------------------------------------------
 @st.cache_data(ttl=5)
 def load_predictions(out_dir=OUT_DIR, limit=1000):
     files = sorted(glob.glob(os.path.join(out_dir, "*.json")))
@@ -18,7 +19,7 @@ def load_predictions(out_dir=OUT_DIR, limit=1000):
         return pd.DataFrame()
 
     rows = []
-    for f in files[-limit:]:   # load latest files
+    for f in files[-limit:]:
         try:
             df = pd.read_json(f, lines=False)
             if isinstance(df, dict):
@@ -45,14 +46,13 @@ if df.empty:
 else:
     df = df.sort_values("timestamp", ascending=False)
 
-    # Clean timestamp if needed
+    # Convert timestamp string to datetime
     if "timestamp" in df.columns:
         try:
             df["timestamp"] = pd.to_datetime(df["timestamp"])
         except:
             pass
 
-    # Filters
     sentiments = ["All", "Positive", "Negative"]
     selected = st.selectbox("Filter by sentiment:", sentiments)
 
@@ -62,9 +62,8 @@ else:
     st.subheader("Latest Predictions")
     st.dataframe(df[["timestamp", "source", "text", "sentiment", "url"]], use_container_width=True)
 
-    # Count summary
+    # Count plot
     st.subheader("Sentiment Counts")
     st.bar_chart(df["sentiment"].value_counts())
 
 st.info("Dashboard auto-refreshes every 5 seconds.")
-st.experimental_rerun()

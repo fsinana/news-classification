@@ -18,9 +18,9 @@ logger = logging.getLogger("news-sentiment-stream")
 
 # -------------------- config -----------------------
 MODEL_DIR = "models/news_sentiment_pipeline"
-IN_DIR = r"C:\temp\news-classification\data\incoming"
-OUT_DIR = r"C:\temp\news-classification\data\predictions"
-CHECKPOINT_DIR = r"C:\temp\news-classification\checkpoints\news_stream"
+IN_DIR = "data/incoming"
+OUT_DIR = "data/predictions"
+CHECKPOINT_DIR = "checkpoints/news_stream"
 os.makedirs(IN_DIR, exist_ok=True)
 os.makedirs(OUT_DIR, exist_ok=True)
 os.makedirs(os.path.dirname(CHECKPOINT_DIR) or ".", exist_ok=True)
@@ -147,8 +147,7 @@ def main():
     checkpoint_path = os.path.abspath(CHECKPOINT_DIR)
     logger.info("Starting streaming: watching %s -> writing to %s (checkpoint=%s)", IN_DIR, OUT_DIR, checkpoint_path)
     result = result.withColumn("event_time", to_timestamp("timestamp"))
-
-# 10 minute watermark to bound state (adjust depending on your data)
+    # 10 minute watermark to bound state (adjust depending on your data)
     result = result.withWatermark("event_time", "10 minutes").dropDuplicates(["id"])
 
     query = result.select(
